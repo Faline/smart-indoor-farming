@@ -3,10 +3,11 @@
 #include <BH1750.h>
 #include <DHT.h>
 #include <Firebase.h>
+#include <ArduinoJson.h>
 
 // wifi
-#define WIFI_SSID "UPH@Event"
-#define WIFI_PASSWORD "transformationalleadership"
+#define WIFI_SSID "Ciakmana"
+#define WIFI_PASSWORD "Pisang4ever"
 
 // firebase 
 #define FIREBASE_URL "https://smartindoorfarming-default-rtdb.firebaseio.com/"
@@ -18,6 +19,16 @@ int durasiJam;
 
 // growlight
 #define RELAY_PIN 4
+
+const bool GROWLIGHT_ACTIVE_LOW = false;
+
+void setGrowLight(bool nyala) {
+  if (GROWLIGHT_ACTIVE_LOW) {
+    digitalWrite(RELAY_PIN, nyala ? LOW : HIGH);
+  } else {
+    digitalWrite(RELAY_PIN, nyala ? HIGH : LOW);
+  }
+}
 
 // dht11
 #define DHTPIN 27
@@ -32,23 +43,32 @@ const int echoAir = 18;
 const int pinLevelA = 34;
 const int pinLevelB = 35;
 
-// gy302 bh1750
+const int THRESHOLD_KERING_A = 120;
+const int THRESHOLD_KERING_B = 470;
+
+const int AMBANG_NUTRISI_RENDAH_A = 434;
+const int AMBANG_NUTRISI_RENDAH_B = 693;
+
 BH1750 lightMeter;
 
-// jalankan sesuatu setiap 10 detik
 unsigned long lastSendTime = 0;
 const unsigned long interval = 10000;
+
+unsigned long previousMillisFirebase = 0;
+const unsigned long intervalFirebase = 5000;
 
 unsigned long startMillis = 0;
 bool autoStarted = false;
 
-// notif
 bool notifSent = false;
+
+int suhuMin = 0, suhuMax = 100, kelembapanMin = 0, kelembapanMax = 100, cahayaMin = 0, cahayaMax = 100000;
+
+float bacaLevelSensor(int pin, int threshold);
 
 void setup() {
   Serial.begin(115200);
 
-  // setup wifi
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting WiFi");
   while (WiFi.status() != WL_CONNECTED) {
@@ -57,13 +77,11 @@ void setup() {
   }
   Serial.println("\nWiFi Connected");
 
-  // pin
   pinMode(trigAir, OUTPUT);
   pinMode(echoAir, INPUT);
   pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, LOW); // LOW -> hidup
+  setGrowLight(false);
 
-  // i2c gy302 bh1750
   Wire.begin(22,23);
   lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE);
 
@@ -71,7 +89,6 @@ void setup() {
 }
 
 void loop() {
-  // sesnor dht11
   float suhu = dht.readTemperature();
   float kelembapan = dht.readHumidity();
 
@@ -84,12 +101,10 @@ void loop() {
     Serial.print(kelembapan); 
     Serial.println(" %"); 
   }
-
-  // sensor intensitas cahaya
+  
   float lux = lightMeter.readLightLevel(); 
   if (lux < 0) lux = 0;
 
-  // sensor ultrasonic
   long durasi; 
   float jarak;
 
@@ -106,11 +121,9 @@ void loop() {
     jarak = durasi * 0.034 / 2;
   }
 
-  // sensor nutrisi
-  float valA = analogRead(pinLevelA);
-  float valB = analogRead(pinLevelB);
+  float valA = bacaLevelSensor(pinLevelA, THRESHOLD_KERING_A);
+  float valB = bacaLevelSensor(pinLevelB, THRESHOLD_KERING_B);
 
-  // serial print
   Serial.print("Cahaya: "); 
   Serial.print(lux); 
   Serial.println(" lux"); 
@@ -125,22 +138,62 @@ void loop() {
   Serial.print("Nutrisi B: "); 
   Serial.println(valB); 
 
-  // ambil data firebase
-  fb.getString("/SmartIndoorFarming/Aktuator/mode", mode);
-  fb.getBool("/SmartIndoorFarming/Aktuator/growLight", growLight);
-  fb.getInt("/SmartIndoorFarming/Parameter/durasi", durasiJam);
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillisFirebase >= intervalFirebase) {
+    previousMillisFirebase = currentMillis;
 
-  // manual dan auto
+    String jsonAktuator;
+    int codeAktuator = fb.getJson("/SmartIndoorFarming/Aktuator", jsonAktuator);
+
+    String jsonParameter;
+    int codeParameter = fb.getJson("/SmartIndoorFarming/Parameter", jsonParameter);
+
+    if (codeAktuator == 200) {
+      JsonDocument docAktuator;
+      DeserializationError errA = deserializeJson(docAktuator, jsonAktuator);
+      if (!errA) {
+        mode = docAktuator["modeGrowLight"] | mode;
+        growLight = docAktuator["growLight"] | growLight;
+      } else {
+        Serial.print("Gagal parse JSON Aktuator: ");
+        Serial.println(errA.c_str());
+      }
+    } else {
+      Serial.print("Gagal ambil Aktuator dari Firebase, code=");
+      Serial.println(codeAktuator);
+    }
+
+    if (codeParameter == 200) {
+      JsonDocument docParameter;
+      DeserializationError errP = deserializeJson(docParameter, jsonParameter);
+      if (!errP) {
+        durasiJam = docParameter["durasi"] | durasiJam;
+        suhuMin = docParameter["suhuMin"] | suhuMin;
+        suhuMax = docParameter["suhuMax"] | suhuMax;
+        kelembapanMin = docParameter["kelembapanMin"] | kelembapanMin;
+        kelembapanMax = docParameter["kelembapanMax"] | kelembapanMax;
+        cahayaMin = docParameter["cahayaMin"] | cahayaMin;
+        cahayaMax = docParameter["cahayaMax"] | cahayaMax;
+      } else {
+        Serial.print("Gagal parse JSON Parameter: ");
+        Serial.println(errP.c_str());
+      }
+    } else {
+      Serial.print("Gagal ambil Parameter dari Firebase, code=");
+      Serial.println(codeParameter);
+    }
+  }
+
   if (mode == "MANUAL") {
 
     if (growLight) {
-      digitalWrite(RELAY_PIN, LOW);
+      setGrowLight(true);
       Serial.println("Growlight MANUAL: NYALA");
     } else {
-      digitalWrite(RELAY_PIN, HIGH);
+      setGrowLight(false);
       Serial.println("Growlight MANUAL: MATI");
     }
-    autoStarted = false; // reset AUTO
+    autoStarted = false;
   } 
   else if (mode == "AUTO") {
     if (!autoStarted) {
@@ -153,35 +206,23 @@ void loop() {
     if (durasiJam > 24) durasiJam = 24;
 
     unsigned long now  = millis();
-
-    // kalau mau test, ganti ke 60000UL. kalau biasa 3600000UL
     unsigned long durasiNyala = durasiJam * 60000UL;
     unsigned long durasiMati  = (24 - durasiJam) * 60000UL;
-
     unsigned long elapsed = now - startMillis;
 
     if (elapsed < durasiNyala) {
-      digitalWrite(RELAY_PIN, LOW);
+      setGrowLight(true);
       Serial.println("AUTO: NYALA");
     } 
     else if (elapsed < (durasiNyala + durasiMati)) {
-      digitalWrite(RELAY_PIN, HIGH);
+      setGrowLight(false);
       Serial.println("AUTO: MATI");
     } 
     else {
-      startMillis = now; // reset siklus 24 jam
+      startMillis = now;
       Serial.println("AUTO: RESET SIKLUS");
     }
   }
-
-  int suhuMin, suhuMax, kelembapanMax, kelembapanMin, cahayaMax, cahayaMin;
-
-  fb.getInt("/SmartIndoorFarming/Parameter/suhuMin", suhuMin);
-  fb.getInt("/SmartIndoorFarming/Parameter/suhuMax", suhuMax);
-  fb.getInt("/SmartIndoorFarming/Parameter/kelembapanMin", kelembapanMin);
-  fb.getInt("/SmartIndoorFarming/Parameter/kelembapanMax", kelembapanMax);
-  fb.getInt("/SmartIndoorFarming/Parameter/cahayaMin", cahayaMin);
-  fb.getInt("/SmartIndoorFarming/Parameter/cahayaMax", cahayaMax);
 
   bool kondisiBahaya = false;
   String pesan = "";
@@ -206,7 +247,7 @@ void loop() {
     pesan += "Air hampir habis!\n";
   }
 
-  if (valA < 1000 || valB < 1000) {
+  if (valA < AMBANG_NUTRISI_RENDAH_A || valB < AMBANG_NUTRISI_RENDAH_B) {
     kondisiBahaya = true;
     pesan += "Persentasi nutrisi rendah!\n";
   }
@@ -224,20 +265,15 @@ void loop() {
     notifSent = true;
   }
 
-  // RESET kalau sudah normal
   if (!kondisiBahaya && notifSent) {
     fb.setBool("/SmartIndoorFarming/Notifikasi/status", false);
-
     Serial.println("Kondisi kembali normal");
-
     notifSent = false;
   }
   
-  // kirim data (tiap 10 detik)
   if (millis() - lastSendTime > interval) {
-  lastSendTime = millis();
+    lastSendTime = millis();
 
-    // kirim data ke database
     fb.setFloat("/SmartIndoorFarming/Sensor/suhu", suhu);
     fb.setFloat("/SmartIndoorFarming/Sensor/kelembapan", kelembapan);
     fb.setFloat("/SmartIndoorFarming/Sensor/intensitasCahaya", lux);
@@ -248,4 +284,22 @@ void loop() {
     Serial.println("Data terkirim!");
   }
   delay(1000);
+}
+
+float bacaLevelSensor(int pin, int threshold) {
+  const int SAMPLE_COUNT = 10;
+  long total = 0;
+
+  for (int i = 0; i < SAMPLE_COUNT; i++) {
+    total += analogRead(pin);
+    delay(2);
+  }
+
+  float nilaiRata = (float)total / SAMPLE_COUNT;
+
+  if (nilaiRata < threshold) {
+    return 0.0;
+  }
+
+  return nilaiRata;
 }

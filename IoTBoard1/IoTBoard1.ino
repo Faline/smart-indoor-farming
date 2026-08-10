@@ -4,13 +4,8 @@
 #include <DHT.h>
 #include <Firebase.h>
 #include <ArduinoJson.h>
+#include "secrets.h"
 
-// wifi
-#define WIFI_SSID "Ciakmana"
-#define WIFI_PASSWORD "Pisang4ever"
-
-// firebase 
-#define FIREBASE_URL "https://smartindoorfarming-default-rtdb.firebaseio.com/"
 Firebase fb(FIREBASE_URL);
 
 String mode;
@@ -206,8 +201,8 @@ void loop() {
     if (durasiJam > 24) durasiJam = 24;
 
     unsigned long now  = millis();
-    unsigned long durasiNyala = durasiJam * 60000UL;
-    unsigned long durasiMati  = (24 - durasiJam) * 60000UL;
+    unsigned long durasiNyala = durasiJam * 3600000UL;
+    unsigned long durasiMati  = (24 - durasiJam) * 3600000UL;
     unsigned long elapsed = now - startMillis;
 
     if (elapsed < durasiNyala) {

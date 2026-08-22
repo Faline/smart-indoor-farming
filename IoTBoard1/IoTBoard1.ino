@@ -50,7 +50,7 @@ unsigned long lastSendTime = 0;
 const unsigned long interval = 10000;
 
 unsigned long previousMillisFirebase = 0;
-const unsigned long intervalFirebase = 5000;
+const unsigned long intervalFirebase = 2000;
 
 unsigned long startMillis = 0;
 bool autoStarted = false;

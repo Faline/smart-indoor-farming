@@ -41,6 +41,12 @@ const int pinLevelB = 35;
 const int THRESHOLD_KERING_A = 120;
 const int THRESHOLD_KERING_B = 470;
 
+const float RAW_KERING_A = 417.0;
+const float RAW_PENUH_A = 2676.85;
+const float RAW_KERING_B = 417.0;
+const float RAW_PENUH_B = 5360.33;
+const float TINGGI_MAKS_CM = 4.0;
+
 const int AMBANG_NUTRISI_RENDAH_A = 434;
 const int AMBANG_NUTRISI_RENDAH_B = 693;
 
@@ -59,7 +65,8 @@ bool notifSent = false;
 
 int suhuMin = 0, suhuMax = 100, kelembapanMin = 0, kelembapanMax = 100, cahayaMin = 0, cahayaMax = 100000;
 
-float bacaLevelSensor(int pin, int threshold);
+float bacaLevelSensor(int pin);
+float konversiCm(float raw, float rawKering, float rawPenuh, float tinggiMaks);
 
 void setup() {
   Serial.begin(115200);
@@ -116,8 +123,11 @@ void loop() {
     jarak = durasi * 0.034 / 2;
   }
 
-  float valA = bacaLevelSensor(pinLevelA, THRESHOLD_KERING_A);
-  float valB = bacaLevelSensor(pinLevelB, THRESHOLD_KERING_B);
+  float valA = bacaLevelSensor(pinLevelA);
+  float valB = bacaLevelSensor(pinLevelB);
+
+  float tinggiA_cm = konversiCm(valA, RAW_KERING_A, RAW_PENUH_A, TINGGI_MAKS_CM);
+  float tinggiB_cm = konversiCm(valB, RAW_KERING_B, RAW_PENUH_B, TINGGI_MAKS_CM);
 
   Serial.print("Cahaya: "); 
   Serial.print(lux); 
@@ -127,11 +137,15 @@ void loop() {
   Serial.print(jarak); 
   Serial.println("cm"); 
   
-  Serial.print("Nutrisi A: "); 
-  Serial.println(valA); 
+  Serial.print("Nutrisi A (raw): "); 
+  Serial.print(valA); 
+  Serial.print(" | Nutrisi A (cm): "); 
+  Serial.println(tinggiA_cm); 
 
-  Serial.print("Nutrisi B: "); 
-  Serial.println(valB); 
+  Serial.print("Nutrisi B (raw): "); 
+  Serial.print(valB); 
+  Serial.print(" | Nutrisi B (cm): "); 
+  Serial.println(tinggiB_cm); 
 
   unsigned long currentMillis = millis();
   if (currentMillis - previousMillisFirebase >= intervalFirebase) {
@@ -273,28 +287,23 @@ void loop() {
     fb.setFloat("/SmartIndoorFarming/Sensor/kelembapan", kelembapan);
     fb.setFloat("/SmartIndoorFarming/Sensor/intensitasCahaya", lux);
     fb.setFloat("/SmartIndoorFarming/Sensor/tinggiAir", jarak);
-    fb.setFloat("/SmartIndoorFarming/Sensor/tinggiNutrisiA", valA);
-    fb.setFloat("/SmartIndoorFarming/Sensor/tinggiNutrisiB", valB);
+    fb.setFloat("/SmartIndoorFarming/Sensor/tinggiNutrisiA", tinggiA_cm);
+    fb.setFloat("/SmartIndoorFarming/Sensor/tinggiNutrisiB", tinggiB_cm);
 
     Serial.println("Data terkirim!");
   }
   delay(1000);
 }
 
-float bacaLevelSensor(int pin, int threshold) {
-  const int SAMPLE_COUNT = 10;
-  long total = 0;
+float bacaLevelSensor(int pin) {
+  return analogRead(pin);
+}
 
-  for (int i = 0; i < SAMPLE_COUNT; i++) {
-    total += analogRead(pin);
-    delay(2);
-  }
+float konversiCm(float raw, float rawKering, float rawPenuh, float tinggiMaks) {
+  float cm = (raw - rawKering) / (rawPenuh - rawKering) * tinggiMaks;
 
-  float nilaiRata = (float)total / SAMPLE_COUNT;
+  if (cm < 0.0) cm = 0.0;
+  if (cm > tinggiMaks) cm = tinggiMaks;
 
-  if (nilaiRata < threshold) {
-    return 0.0;
-  }
-
-  return nilaiRata;
+  return cm;
 }
